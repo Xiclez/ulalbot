@@ -29,9 +29,9 @@ const toolImplementations = {
     search_web: async ({ query }) => {
         console.log(`[Tool Executed] Searching web for: "${query}"`);
         // Simulación de una búsqueda exitosa
-        return { 
-            success: true, 
-            result: `Según una búsqueda en la web, los resultados más relevantes para "${query}" indican que es una excelente opción con alta demanda laboral. Fuente: PortalDeEmpleos.com` 
+        return {
+            success: true,
+            result: `Según una búsqueda en la web, los resultados más relevantes para "${query}" indican que es una excelente opción con alta demanda laboral. Fuente: PortalDeEmpleos.com`
         };
     },
 };
@@ -85,7 +85,7 @@ async function loadKnowledgeBaseFromDirectory() {
 
 async function initializeInfoModel() {
     const knowledgeText = await loadKnowledgeBaseFromDirectory();
-    
+
     const systemInstruction = `Actúa como un asesor educativo virtual de la Universidad en Línea América Latina (ULAL). Tu personalidad es profesional, cálida, empática, motivadora y muy humana. Tu objetivo es que los usuarios se sientan cómodos y perfectamente informados.
 
 **TU CONOCIMIENTO BASE:**
@@ -104,11 +104,13 @@ ${knowledgeText || "No hay información disponible en los documentos."}
 -   **No Abrumar:** Ante preguntas generales como "¿información de la prepa?", da una respuesta breve y útil, y luego pregunta qué le interesa más al usuario para guiarlo (costos, duración, etc.). Usa viñetas para que la información sea fácil de digerir.
 -   **Motivar sin Presionar:** Usa frases de aliento como "¡Claro que es posible! Muchos de nuestros alumnos lo logran" o "Estás dando un gran paso, y estamos aquí para apoyarte".
 -   **Orientar al Siguiente Paso:** Después de resolver sus dudas, siempre invita al usuario a comenzar su inscripción. Di algo como: "Espero que esto te sea de ayuda. Si te sientes listo, podemos comenzar tu proceso de inscripción cuando quieras. Solo dime 'quiero inscribirme'."
-
+-   **No des informacion de golpe:** Incluso si está disponible debes siempre dosificar la información que proporcionas asi como guiar con sugerencias
+-   **Incentivar la inscripcion:** Si el interesado ha hecho muchas preguntas incentivale la inscripcion mencionando que solo recabars datos para la inscripción y ofreciendo descuentos de 50% en la inscripcion, menciona cosas como "Promocion SOLO POR HOY" o "Tengo algo especial para ti"
+-   **Uso de emojis:** Esto con la finalidad de hacer los mensajes mas vistosos y mas humanos. No abusar de ellos
 **RESTRICCIONES:**
 -   Nunca inventes datos. Si no lo sabes y no lo puedes buscar, sé honesto.
 -   Responde siempre en español mexicano, con un tono amigable y natural.`;
-    
+
     const genAI = new GoogleGenerativeAI(process.env.API_KEY);
     infoModel = genAI.getGenerativeModel({
         model: 'gemini-1.5-flash',
@@ -137,7 +139,7 @@ async function handleInfoRequest(userProfile, chatHistory, webhookData) {
         console.log(`Intención de inscripción detectada para ${remoteJid}.`);
         userProfile.inscriptionStatus = 'awaiting_all_data';
         await usersCollection.updateOne({ _id: remoteJid }, { $set: { inscriptionStatus: 'awaiting_all_data' } });
-        
+
         // Delegar a inscripcion.js
         if (inscriptionHandler) {
             await inscriptionHandler(userProfile, webhookData);
@@ -157,7 +159,7 @@ async function handleInfoRequest(userProfile, chatHistory, webhookData) {
         while (response.functionCalls() && response.functionCalls().length > 0) {
             const functionCalls = response.functionCalls();
             console.log(`Gemini solicita llamada a herramienta:`, functionCalls);
-            
+
             const toolResults = [];
             for (const call of functionCalls) {
                 const { name, args } = call;
@@ -174,7 +176,7 @@ async function handleInfoRequest(userProfile, chatHistory, webhookData) {
             result = await chat.sendMessage(toolResults);
             response = result.response;
         }
-        
+
         const botResponseText = response.text();
         await sendWhatsappMessage(remoteJid, botResponseText, webhookData);
 
