@@ -5,7 +5,7 @@
  */
 const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
 // **CORRECCIÓN:** Se ha actualizado la importación para usar MongoDB.
-const { getUsersCollection, sendWhatsappMessage } = require('./utils.js');
+const { getUsersCollection, sendWhatsappMessage, notifyDirectorOfNewRegistration } = require('./utils.js');
 require('dotenv').config();
 
 const safetySettings = [
@@ -305,6 +305,8 @@ async function handleInscription(userProfile, webhookData) {
              return;
         }
         await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
+        const finalData = { _id: remoteJid, ...userProfile.inscriptionData, payment: userProfile.payment, status: 'completed', createdAt: new Date() };
+        await notifyDirectorOfNewRegistration(finalData, webhookData);
         await sendWhatsappMessage(remoteJid, message, webhookData);
         return;
     }
@@ -316,6 +318,8 @@ async function handleInscription(userProfile, webhookData) {
             userProfile.payment.status = 'scheduled';
             userProfile.inscriptionStatus = 'completed';
             await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
+            //const finalData = { _id: remoteJid, ...userProfile.inscriptionData, payment: userProfile.payment, status: 'completed', createdAt: new Date() };            
+            //await notifyDirectorOfNewRegistration(finalData, webhookData);
             await sendWhatsappMessage(remoteJid, `¡Perfecto! Hemos agendado tu visita para el ${parsedDate.dateTime}. ¡Tu inscripción está completa! Te esperamos.`, webhookData);
         } else {
             await sendWhatsappMessage(remoteJid, "No pude entender la fecha y hora. ¿Podrías ser más específico? Por ejemplo: 'mañana a las 10 am' o 'el viernes a las 4 de la tarde'.", webhookData);
