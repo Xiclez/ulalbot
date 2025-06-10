@@ -30,7 +30,7 @@ app.post('/webhook/evolution', async (req, res) => {
     if (req.body.data.key.fromMe) {
         return res.status(200).send("Mensaje propio ignorado.");
     }
-    
+
     const webhookData = req.body;
     const remoteJid = webhookData.data.key.remoteJid;
     const userInput = webhookData.data.message.conversation || (webhookData.data.message.imageMessage ? "[IMAGEN RECIBIDA]" : "");
@@ -41,7 +41,7 @@ app.post('/webhook/evolution', async (req, res) => {
 
     const { usersCollection } = getUsersCollection();
     const { chatHistoriesCollection } = getChatHistoriesCollection();
-    
+
     if (!usersCollection || !chatHistoriesCollection) {
         console.error("Error de DB: Una o más colecciones no están disponibles.");
         return res.status(200).send("Error de DB, no se puede procesar.");
@@ -67,12 +67,12 @@ app.post('/webhook/evolution', async (req, res) => {
         if (userProfile.inscriptionStatus && userProfile.inscriptionStatus !== 'not_started' && userProfile.inscriptionStatus !== 'completed') {
             // El módulo de inscripción no necesita el historial de chat general
             await handleInscription(userProfile, webhookData);
-        } 
+        }
         // Si no, usar el bot informativo (que sí usa el historial de chat)
         else {
             await handleInfoRequest(userProfile, chatHistory, webhookData);
         }
-        
+
         res.status(200).send("Procesado");
 
     } catch (error) {
@@ -84,10 +84,9 @@ app.post('/webhook/evolution', async (req, res) => {
 app.get('/', (req, res) => {
     res.send('Servidor ULAL AI Agent (v14 - Separated History) funcionando.');
 });
-if (process.env.NODE_ENV !== 'production') {
-    const PORT = process.env.PORT || 3000;
-    app.listen(PORT, () => {
-        console.log(`Servidor DEV escuchando en http://localhost:${PORT}`);
+    const PORT = process.env.PORT || 3010;
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`Servidor escuchando en http://localhost:${PORT}`);
     });
-}
+
 module.exports = app;
