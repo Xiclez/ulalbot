@@ -22,6 +22,33 @@ main();
 const app = express();
 app.use(bodyParser.json({ limit: '25mb' }));
 
+// Endpoint para la verificación del webhook de Meta
+app.get('/webhook/meta', (req, res) => {
+    // Carga tu token de verificación desde las variables de entorno.
+    const verifyToken = process.env.META_VERIFY_TOKEN;
+
+    // Meta envía estos tres parámetros en la solicitud de verificación.
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+
+    // Verifica que los parámetros 'mode' y 'token' existan en la solicitud.
+    if (mode && token) {
+        // Verifica que 'mode' sea 'subscribe' y que el token coincida con el tuyo.
+        if (mode === 'subscribe' && token === verifyToken) {
+            console.log('WEBHOOK_VERIFIED');
+            // Responde con el valor 'challenge' que te envió Meta para completar el proceso.
+            res.status(200).send(challenge);
+        } else {
+            // Si los tokens no coinciden, responde con un error '403 Forbidden'.
+            res.sendStatus(403);
+        }
+    } else {
+        // Si faltan los parámetros, responde con un error.
+        res.sendStatus(400);
+    }
+});
+
 app.post('/webhook/evolution', async (req, res) => {
     // Validaciones iniciales del webhook
     if (typeof req.body !== 'object' || req.body === null || !req.body.event || !req.body.data.message) {
