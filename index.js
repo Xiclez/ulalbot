@@ -23,7 +23,7 @@ const app = express();
 app.use(bodyParser.json({ limit: '25mb' }));
 
 // Endpoint para la verificación del webhook de Meta
-app.get('/webhook/meta', (req, res) => {
+app.post('/webhook/meta', (req, res) => {
     // Carga tu token de verificación desde las variables de entorno.
     const verifyToken = process.env.META_VERIFY_TOKEN;
 
