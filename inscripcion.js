@@ -146,34 +146,30 @@ async function handleInscription(userProfile, platform, webhookData) {
         return;
     }
     
-    // Obtener la colección de MongoDB
     const { usersCollection } = getUsersCollection();
     if (!usersCollection) {
-        console.error("Error de DB en handleInscription: La colección de usuarios no está disponible.");
-        await sendMessage(platform, userProfile._id, "Lo siento, hay un problema con nuestra base de datos. Por favor, intenta más tarde.", webhookData);
+        await sendMessage(platform, userProfile._id, "Lo siento, hay un problema con nuestra base de datos.", webhookData);
         return;
     }
+
     const remoteJid = userProfile._id;
     let currentStatus = userProfile.inscriptionStatus;
 
-    // --- EXTRACCIÓN DE DATOS MULTIPLATAFORMA ---
     let userInput = null;
     let imageAttachment = null;
 
     if (platform === 'whatsapp') {
         userInput = webhookData.data.message.conversation;
         if (webhookData.data.message.imageMessage) {
-            console.log("[IMAGE_DETECTED] Imagen recibida desde WhatsApp.");
             imageAttachment = {
                 base64: webhookData.data.message.base64,
                 mimeType: webhookData.data.message.imageMessage.mimetype || 'image/jpeg'
             };
         }
-    } else if (platform === 'meta') { // Facebook o Instagram
+    } else if (platform === 'meta') {
         const messagingEvent = webhookData.entry[0].messaging[0];
         userInput = messagingEvent.message.text;
         if (messagingEvent.message.attachments && messagingEvent.message.attachments[0].type === 'image') {
-            console.log("[IMAGE_DETECTED] Imagen recibida desde Meta (Facebook/Instagram).");
             imageAttachment = {
                 url: messagingEvent.message.attachments[0].payload.url,
                 mimeType: 'image/jpeg'
@@ -181,108 +177,30 @@ async function handleInscription(userProfile, platform, webhookData) {
         }
     }
 
-    // --- PROCESAMIENTO DE IMÁGENES (INE Y COMPROBANTE) ---
+    // --- **LÓGICA CORREGIDA:** Flujo separado para imágenes y texto ---
+
+    // --- PROCESAMIENTO DE IMÁGENES ---
     if (imageAttachment) {
+        console.log(`[INSCRIPTION_LOGIC] Procesando imagen para el estado: ${currentStatus}`);
         let imageBase64 = imageAttachment.base64;
         
-        // Si la imagen viene de Meta, necesitamos descargarla primero
-         if (platform === 'meta' && imageAttachment.url) {
+        if (platform === 'meta' && imageAttachment.url) {
             try {
-                console.log(`[DOWNLOAD_META_IMG] Descargando imagen desde: ${imageAttachment.url}`);
                 await sendMessage(platform, remoteJid, "Recibí tu imagen, un momento mientras la proceso...", webhookData);
                 const response = await axios.get(imageAttachment.url, { responseType: 'arraybuffer' });
                 imageBase64 = Buffer.from(response.data).toString('base64');
-                console.log("[DOWNLOAD_META_SUCCESS] Imagen descargada y convertida a base64.");
             } catch (error) {
-                console.error("[DOWNLOAD_META_ERROR] Error descargando imagen de Meta:", error);
-                await sendMessage(platform, remoteJid, "Tuve problemas para procesar la imagen que enviaste. ¿Podrías intentar de nuevo?", webhookData);
+                await sendMessage(platform, remoteJid, "Tuve problemas para procesar la imagen. ¿Podrías intentar de nuevo?", webhookData);
                 return;
             }
         }
 
         if (!imageBase64) {
-            console.log("[IMAGE_ERROR] No se pudo obtener el contenido de la imagen en base64.");
             await sendMessage(platform, remoteJid, "Lo siento, no pude procesar el contenido de la imagen.", webhookData);
             return;
         }
-    // --- INICIO DEL FLUJO DE INSCRIPCIÓN ---
-    if (currentStatus === 'awaiting_all_data') {
-        const initialMessage = `¡Excelente! Para realizar tu trámite de inscripción, por favor mándame tus siguientes datos. Puedes escribirlos en un solo mensaje, separados por comas o en diferentes líneas:
-▪️ Nombre completo
-▪️ Fecha de nacimiento (DD/MM/AAAA)
-▪️ CURP
-▪️ Correo electrónico
-▪️ Teléfono con WhatsApp
-▪️ Último grado de estudios terminado
-▪️ Escuela de procedencia
-▪️ 2 contactos de emergencia (nombre y teléfono)
-▪️ Nivel al que te inscribes (y horario si es presencial)`;
-        
-        await sendMessage(platform,remoteJid, initialMessage, webhookData);
-        userProfile.inscriptionStatus = 'validating_data';
-        await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
-        return;
-    }
-    
-    // --- VALIDACIÓN DEL BLOQUE DE DATOS INICIAL ---
-    if (currentStatus === 'validating_data' && userInput) {
-        await sendMessage(platform, remoteJid, "Gracias, estoy procesando tu información...", webhookData);
-        try {
-            const validationPrompt = `Analiza este bloque de texto y extrae los campos: nombreCompleto, fechaNacimiento, curp, email, telefono, nivelEducacion, escuelaProcedencia, contactoEmergencia1, contactoEmergencia2, nivelInscripcion. Responde solo con un JSON: {"action": "validate_data", "data": {...}, "missing": [...]}. El texto es: "${userInput}"`;
-            const result = await inscriptionModel.generateContent(validationPrompt);
-            const responseJson = JSON.parse(cleanJson(result.response.text()));
 
-            if (responseJson.action === 'validate_data') {
-                userProfile.inscriptionData = { ...userProfile.inscriptionData, ...responseJson.data };
-                
-                if (responseJson.missing && responseJson.missing.length > 0) {
-                    const nextField = responseJson.missing[0];
-                    userProfile.inscriptionStatus = `collecting_${nextField}`;
-                    await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
-                    const question = fieldQuestions[nextField] || `Faltó un dato, ¿podrías proporcionármelo?`;
-                    await sendMessage(platform, remoteJid, `Gracias. ${question}`, webhookData);
-                } else {
-                    userProfile.inscriptionStatus = 'awaiting_ine_front';
-                    await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
-                    await sendMessage(platform, remoteJid, "¡Perfecto, tengo todos tus datos! Ahora, por favor, envíame una foto clara del FRENTE de tu INE.", webhookData);
-                }
-            }
-        } catch (error) {
-            console.error("Error al validar datos:", error);
-            await sendMessage(platform, remoteJid, "Hubo un problema procesando tu información. ¿Podrías intentar enviarla de nuevo?", webhookData);
-        }
-        return;
-    }
-
-    // --- RECOLECCIÓN DE DATOS FALTANTES ---
-    if (currentStatus.startsWith('collecting_')) {
-        const fieldToCollect = currentStatus.replace('collecting_', '');
-        if (userInput) {
-            userProfile.inscriptionData[fieldToCollect] = userInput;
-            const allDataText = Object.values(userProfile.inscriptionData).join(', ');
-            const validationPrompt = `Analiza este bloque de texto y extrae los campos que faltan de esta lista: nombreCompleto, fechaNacimiento, curp, email, telefono, nivelEducacion, escuelaProcedencia, contactoEmergencia1, contactoEmergencia2, nivelInscripcion. Responde solo con un JSON: {"action": "validate_data", "data": {...}, "missing": [...]}. El texto es: "${allDataText}"`;
-            const result = await inscriptionModel.generateContent(validationPrompt);
-            const responseJson = JSON.parse(cleanJson(result.response.text()));
-            
-            if (responseJson.missing && responseJson.missing.length > 0) {
-                const nextField = responseJson.missing[0];
-                userProfile.inscriptionStatus = `collecting_${nextField}`;
-                const question = fieldQuestions[nextField];
-                await sendMessage(platform, remoteJid, `Gracias. ${question}`, webhookData);
-            } else {
-                userProfile.inscriptionStatus = 'awaiting_ine_front';
-                await sendMessage(platform, remoteJid, "¡Perfecto, ahora sí tengo todo! Por favor, envíame la foto del FRENTE de tu INE.", webhookData);
-            }
-            await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
-        }
-        return;
-    }
-
-    // --- MANEJO DE IMÁGENES (VALIDACIÓN DE INE Y COMPROBANTE DE PAGO) ---
-    if (webhookData.data.message.imageMessage) {
-        const imageBase64 = imageAttachment.base64;
-        
-        if (currentStatus === 'awaiting_ine_front' && imageBase64) {
+        if (currentStatus === 'awaiting_ine_front') {
             await sendMessage(platform, remoteJid, "Recibí la foto del frente, validando la información... 🧐", webhookData);
             const extractedData = await extractIneData(imageBase64, 'anverso');
             if (!extractedData?.data) {
@@ -294,16 +212,15 @@ async function handleInscription(userProfile, platform, webhookData) {
                 userProfile.inscriptionData.ineFrontBase64 = imageBase64;
                 userProfile.inscriptionStatus = 'awaiting_ine_back';
                 await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
-                await sendMessage(platform, remoteJid, "¡Validación exitosa! 👍 Ahora, por favor, envíame la foto del REVERSO de la misma INE.", webhookData);
+                await sendMessage(platform, remoteJid, "¡Validación exitosa! 👍 Ahora, por favor, envíame la foto del REVERSO.", webhookData);
             } else {
-                await sendMessage(platform, remoteJid, `Hubo una discrepancia al validar tu INE: ${validationResult.reason}. Por favor, verifica tus datos o envía una foto más clara.`, webhookData);
+                await sendMessage(platform, remoteJid, `Hubo una discrepancia: ${validationResult.reason}. Verifica tus datos o envía una foto más clara.`, webhookData);
             }
         } 
-        // PROCESO PARA EL REVERSO DE LA INE
-        else if (currentStatus === 'awaiting_ine_back' && imageBase64) {
+        else if (currentStatus === 'awaiting_ine_back') {
             await sendMessage(platform, remoteJid, "Recibí la foto del reverso, realizando la última comprobación...", webhookData);
             const extractedData = await extractIneData(imageBase64, 'reverso');
-             if (!extractedData?.data) {
+            if (!extractedData?.data) {
                 await sendMessage(platform, remoteJid, "No pude leer la información del reverso. ¿Podrías enviar una foto más clara?", webhookData);
                 return;
             }
@@ -315,64 +232,106 @@ async function handleInscription(userProfile, platform, webhookData) {
                 const message = `¡Perfecto, todos tus documentos son correctos! Para finalizar, solo falta el pago. ¿Qué método prefieres?\n1. Depósito o Transferencia\n2. Pago con Tarjeta\n3. Pago en Caja`;
                 await sendMessage(platform, remoteJid, message, webhookData);
             } else {
-                await sendMessage(platform, remoteJid, `La información del reverso no coincide: ${validationResult.reason}. Por favor, envía una foto clara del reverso de tu INE.`, webhookData);
+                await sendMessage(platform, remoteJid, `La información del reverso no coincide: ${validationResult.reason}. Por favor, envía una foto clara del reverso.`, webhookData);
             }
-        }else if (currentStatus === 'awaiting_payment_proof' && imageBase64) {
-            userProfile.payment = {
-                method: 'transferencia',
-                status: 'comprobante_recibido',
-                proofBase64: imageBase64,
-                receivedAt: new Date()
-            };
-            userProfile.inscriptionStatus = 'completed';
-            const finalData = { _id: remoteJid, ...userProfile.inscriptionData, payment: userProfile.payment, status: 'completed', createdAt: new Date() };
-            await usersCollection.replaceOne({ _id: remoteJid }, finalData, { upsert: true });
-            await sendMessage(platform, remoteJid, "¡He recibido tu comprobante! Gracias, en breve confirmaremos tu pago. ¡Tu inscripción está completa!", webhookData);
         }
-        return;
-    }
-    
-    // --- FLUJO DE TEXTO PARA SELECCIÓN DE PAGO ---
-    if (currentStatus === 'awaiting_payment_method' && userInput) {
-        const input = userInput.toLowerCase();
-        let message = "";
-        if (input.includes('1') || input.includes('deposito') || input.includes('transferencia')) {
-            userProfile.inscriptionStatus = 'awaiting_payment_proof';
-            userProfile.payment = { method: 'transferencia', status: 'pending' };
-            message = `Claro, aquí tienes los datos para tu pago:\nBanco: BANAMEX\nBeneficiario: UNIVERSIDAD DE MEXICO AMERICA LATINA EN LINEA SC\nCLABE: 0021 5070 1822 2027 09\nCUENTA: 7018-2220270\n\nPor favor, envíame una foto de tu comprobante de pago cuando lo hayas realizado.`;
-        } else if (input.includes('2') || input.includes('tarjeta')) {
-            userProfile.payment = { method: 'tarjeta', status: 'pending_implementation' };
-            message = "Actualmente estamos trabajando en la integración para pagos con tarjeta. Por ahora, ¿te gustaría elegir la opción de depósito/transferencia o pago en caja?";
-        } else if (input.includes('3') || input.includes('caja')) {
-            userProfile.inscriptionStatus = 'awaiting_caja_schedule';
-            userProfile.payment = { method: 'caja', status: 'pending_schedule' };
-            message = `¡Con gusto te esperamos! Nuestros horarios de atención son:\nLunes a Viernes de 8:00 a 19:30\nSábados de 8:00 a 14:00\nDomingos de 9:00 a 13:00\n\n¿Qué día y hora te gustaría pasar a realizar tu pago para agendar tu visita?`;
-        } else {
-             await sendMessage(platform, remoteJid, "No entendí tu selección. Por favor, elige 1, 2 o 3.", webhookData);
-             return;
+        else if (currentStatus === 'awaiting_payment_proof') {
+             userProfile.payment = { method: 'transferencia', status: 'comprobante_recibido', proofBase64: imageBase64, receivedAt: new Date() };
+             userProfile.inscriptionStatus = 'completed';
+             const finalData = { _id: remoteJid, ...userProfile.inscriptionData, payment: userProfile.payment, status: 'completed', createdAt: new Date() };
+             await usersCollection.replaceOne({ _id: remoteJid }, finalData, { upsert: true });
+             await notifyDirectorOfNewRegistration(finalData, webhookData);
+             await sendMessage(platform, remoteJid, "¡He recibido tu comprobante! Gracias, en breve confirmaremos tu pago. ¡Tu inscripción está completa!", webhookData);
         }
-        await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
-        const finalData = { _id: remoteJid, ...userProfile.inscriptionData, payment: userProfile.payment, status: 'completed', createdAt: new Date() };
-        await notifyDirectorOfNewRegistration(finalData, webhookData);
-        await sendMessage(platform, remoteJid, message, webhookData);
-        return;
+        return; // Termina la ejecución después de manejar la imagen
     }
 
-    if (currentStatus === 'awaiting_caja_schedule' && userInput) {
-        const parsedDate = await parseAppointmentDateTime(userInput);
-        if (parsedDate && parsedDate.dateTime) {
-            userProfile.payment.scheduledAt = parsedDate.dateTime;
-            userProfile.payment.status = 'scheduled';
-            userProfile.inscriptionStatus = 'completed';
+    // --- PROCESAMIENTO DE TEXTO ---
+    if (userInput) {
+        console.log(`[INSCRIPTION_LOGIC] Procesando texto para el estado: ${currentStatus}`);
+        
+        if (currentStatus === 'awaiting_all_data') {
+            const initialMessage = `¡Excelente! Para realizar tu trámite de inscripción, por favor mándame tus siguientes datos. Puedes escribirlos en un solo mensaje, separados por comas o en diferentes líneas:\n▪️ Nombre completo\n▪️ Fecha de nacimiento (DD/MM/AAAA)\n▪️ CURP\n▪️ Correo electrónico\n▪️ Teléfono con WhatsApp\n▪️ Último grado de estudios terminado\n▪️ Escuela de procedencia\n▪️ 2 contactos de emergencia (nombre y teléfono)\n▪️ Nivel al que te inscribes (y horario si es presencial)`;
+            await sendMessage(platform, remoteJid, initialMessage, webhookData);
+            userProfile.inscriptionStatus = 'validating_data';
             await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
-            //const finalData = { _id: remoteJid, ...userProfile.inscriptionData, payment: userProfile.payment, status: 'completed', createdAt: new Date() };            
-            //await notifyDirectorOfNewRegistration(finalData, webhookData);
-            await sendMessage(platform, remoteJid, `¡Perfecto! Hemos agendado tu visita para el ${parsedDate.dateTime}. ¡Tu inscripción está completa! Te esperamos.`, webhookData);
-        } else {
-            await sendMessage(platform, remoteJid, "No pude entender la fecha y hora. ¿Podrías ser más específico? Por ejemplo: 'mañana a las 10 am' o 'el viernes a las 4 de la tarde'.", webhookData);
         }
-        return;
+        else if (currentStatus === 'validating_data') {
+            await sendMessage(platform, remoteJid, "Gracias, estoy procesando tu información...", webhookData);
+            try {
+                const validationPrompt = `Analiza este bloque de texto y extrae los campos: nombreCompleto, fechaNacimiento, curp, email, telefono, nivelEducacion, escuelaProcedencia, contactoEmergencia1, contactoEmergencia2, nivelInscripcion. Responde solo con un JSON: {"action": "validate_data", "data": {...}, "missing": [...]}. El texto es: "${userInput}"`;
+                const result = await inscriptionModel.generateContent(validationPrompt);
+                const responseJson = JSON.parse(cleanJson(result.response.text()));
+                if (responseJson.action === 'validate_data') {
+                    userProfile.inscriptionData = { ...userProfile.inscriptionData, ...responseJson.data };
+                    if (responseJson.missing && responseJson.missing.length > 0) {
+                        const nextField = responseJson.missing[0];
+                        userProfile.inscriptionStatus = `collecting_${nextField}`;
+                        await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
+                        const question = fieldQuestions[nextField] || `Faltó un dato, ¿podrías proporcionármelo?`;
+                        await sendMessage(platform, remoteJid, `Gracias. ${question}`, webhookData);
+                    } else {
+                        userProfile.inscriptionStatus = 'awaiting_ine_front';
+                        await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
+                        await sendMessage(platform, remoteJid, "¡Perfecto, tengo todos tus datos! Ahora, por favor, envíame una foto clara del FRENTE de tu INE.", webhookData);
+                    }
+                }
+            } catch (error) {
+                await sendMessage(platform, remoteJid, "Hubo un problema procesando tu información. ¿Podrías intentar enviarla de nuevo?", webhookData);
+            }
+        }
+        else if (currentStatus.startsWith('collecting_')) {
+            const fieldToCollect = currentStatus.replace('collecting_', '');
+            userProfile.inscriptionData[fieldToCollect] = userInput;
+            const allDataText = Object.values(userProfile.inscriptionData).join(', ');
+            const validationPrompt = `Analiza este bloque de texto y extrae los campos que faltan de esta lista: nombreCompleto, fechaNacimiento, curp, email, telefono, nivelEducacion, escuelaProcedencia, contactoEmergencia1, contactoEmergencia2, nivelInscripcion. Responde solo con un JSON: {"action": "validate_data", "data": {...}, "missing": [...]}. El texto es: "${allDataText}"`;
+            const result = await inscriptionModel.generateContent(validationPrompt);
+            const responseJson = JSON.parse(cleanJson(result.response.text()));
+            if (responseJson.missing && responseJson.missing.length > 0) {
+                const nextField = responseJson.missing[0];
+                userProfile.inscriptionStatus = `collecting_${nextField}`;
+                const question = fieldQuestions[nextField];
+                await sendMessage(platform, remoteJid, `Gracias. ${question}`, webhookData);
+            } else {
+                userProfile.inscriptionStatus = 'awaiting_ine_front';
+                await sendMessage(platform, remoteJid, "¡Perfecto, ahora sí tengo todo! Por favor, envíame la foto del FRENTE de tu INE.", webhookData);
+            }
+            await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
+        }
+        else if (currentStatus === 'awaiting_payment_method') {
+            const input = userInput.toLowerCase();
+            let message = "";
+            if (input.includes('1') || input.includes('deposito') || input.includes('transferencia')) {
+                userProfile.inscriptionStatus = 'awaiting_payment_proof';
+                userProfile.payment = { method: 'transferencia', status: 'pending' };
+                message = `Claro, aquí tienes los datos para tu pago:\nBanco: BANAMEX\nBeneficiario: UNIVERSIDAD DE MEXICO AMERICA LATINA EN LINEA SC\nCLABE: 0021 5070 1822 2027 09\nCUENTA: 7018-2220270\n\nPor favor, envíame una foto de tu comprobante de pago cuando lo hayas realizado.`;
+            } else if (input.includes('2') || input.includes('tarjeta')) {
+                userProfile.payment = { method: 'tarjeta', status: 'pending_implementation' };
+                message = "Actualmente estamos trabajando en la integración para pagos con tarjeta. Por ahora, ¿te gustaría elegir la opción de depósito/transferencia o pago en caja?";
+            } else if (input.includes('3') || input.includes('caja')) {
+                userProfile.inscriptionStatus = 'awaiting_caja_schedule';
+                userProfile.payment = { method: 'caja', status: 'pending_schedule' };
+                message = `¡Con gusto te esperamos! Nuestros horarios de atención son:\nLunes a Viernes de 8:00 a 19:30\nSábados de 8:00 a 14:00\nDomingos de 9:00 a 13:00\n\n¿Qué día y hora te gustaría pasar a realizar tu pago para agendar tu visita?`;
+            } else {
+                 await sendMessage(platform, remoteJid, "No entendí tu selección. Por favor, elige 1, 2 o 3.", webhookData);
+                 return;
+            }
+            await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
+            await sendMessage(platform, remoteJid, message, webhookData);
+        }
+        else if (currentStatus === 'awaiting_caja_schedule') {
+            const parsedDate = await parseAppointmentDateTime(userInput);
+            if (parsedDate && parsedDate.dateTime) {
+                userProfile.payment = { ...userProfile.payment, scheduledAt: parsedDate.dateTime, status: 'scheduled' };
+                userProfile.inscriptionStatus = 'completed';
+                const finalData = { _id: remoteJid, ...userProfile.inscriptionData, payment: userProfile.payment, status: 'completed', createdAt: new Date() };
+                await usersCollection.replaceOne({ _id: remoteJid }, finalData, { upsert: true });
+                await notifyDirectorOfNewRegistration(finalData, webhookData);
+                await sendMessage(platform, remoteJid, `¡Perfecto! Hemos agendado tu visita para el ${parsedDate.dateTime}. ¡Tu inscripción está completa!`, webhookData);
+            } else {
+                await sendMessage(platform, remoteJid, "No pude entender la fecha y hora. ¿Podrías ser más específico?", webhookData);
+            }
+        }
     }
-}
 }
 module.exports = { initializeInscriptionModel, handleInscription };
