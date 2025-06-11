@@ -163,6 +163,7 @@ async function handleInscription(userProfile, platform, webhookData) {
     if (platform === 'whatsapp') {
         userInput = webhookData.data.message.conversation;
         if (webhookData.data.message.imageMessage) {
+            console.log("[IMAGE_DETECTED] Imagen recibida desde WhatsApp.");
             imageAttachment = {
                 base64: webhookData.data.message.base64,
                 mimeType: webhookData.data.message.imageMessage.mimetype || 'image/jpeg'
@@ -171,14 +172,12 @@ async function handleInscription(userProfile, platform, webhookData) {
     } else if (platform === 'meta') { // Facebook o Instagram
         const messagingEvent = webhookData.entry[0].messaging[0];
         userInput = messagingEvent.message.text;
-        if (messagingEvent.message.attachments) {
-            const attachment = messagingEvent.message.attachments[0];
-            if (attachment.type === 'image') {
-                imageAttachment = {
-                    url: attachment.payload.url,
-                    mimeType: 'image/jpeg' // La API de Meta no siempre provee mimetype, asumimos jpeg.
-                };
-            }
+        if (messagingEvent.message.attachments && messagingEvent.message.attachments[0].type === 'image') {
+            console.log("[IMAGE_DETECTED] Imagen recibida desde Meta (Facebook/Instagram).");
+            imageAttachment = {
+                url: messagingEvent.message.attachments[0].payload.url,
+                mimeType: 'image/jpeg'
+            };
         }
     }
 
@@ -187,18 +186,25 @@ async function handleInscription(userProfile, platform, webhookData) {
         let imageBase64 = imageAttachment.base64;
         
         // Si la imagen viene de Meta, necesitamos descargarla primero
-        if (platform === 'meta' && imageAttachment.url) {
+         if (platform === 'meta' && imageAttachment.url) {
             try {
+                console.log(`[DOWNLOAD_META_IMG] Descargando imagen desde: ${imageAttachment.url}`);
                 await sendMessage(platform, remoteJid, "Recibí tu imagen, un momento mientras la proceso...", webhookData);
                 const response = await axios.get(imageAttachment.url, { responseType: 'arraybuffer' });
                 imageBase64 = Buffer.from(response.data).toString('base64');
+                console.log("[DOWNLOAD_META_SUCCESS] Imagen descargada y convertida a base64.");
             } catch (error) {
-                console.error("Error descargando imagen de Meta:", error);
+                console.error("[DOWNLOAD_META_ERROR] Error descargando imagen de Meta:", error);
                 await sendMessage(platform, remoteJid, "Tuve problemas para procesar la imagen que enviaste. ¿Podrías intentar de nuevo?", webhookData);
                 return;
             }
         }
-    }
+
+        if (!imageBase64) {
+            console.log("[IMAGE_ERROR] No se pudo obtener el contenido de la imagen en base64.");
+            await sendMessage(platform, remoteJid, "Lo siento, no pude procesar el contenido de la imagen.", webhookData);
+            return;
+        }
     // --- INICIO DEL FLUJO DE INSCRIPCIÓN ---
     if (currentStatus === 'awaiting_all_data') {
         const initialMessage = `¡Excelente! Para realizar tu trámite de inscripción, por favor mándame tus siguientes datos. Puedes escribirlos en un solo mensaje, separados por comas o en diferentes líneas:
@@ -368,5 +374,5 @@ async function handleInscription(userProfile, platform, webhookData) {
         return;
     }
 }
-
+}
 module.exports = { initializeInscriptionModel, handleInscription };
