@@ -45,7 +45,29 @@ async function connectToMongoDB() {
         console.error("Error al conectar con MongoDB:", error);
     }
 }
+function getUsersCollection() {
+    return { usersCollection };
+}
 
+function getChatHistoriesCollection(){
+    return{ chatHistoriesCollection };
+}
+async function saveProfile(remoteJid, profileData) {
+    if (!usersCollection) return;
+    await usersCollection.updateOne({ _id: remoteJid }, { $set: profileData }, { upsert: true });
+}
+async function saveHistory(remoteJid, historyArray) {
+    if (!chatHistoriesCollection) return;
+    await chatHistoriesCollection.updateOne({ _id: remoteJid }, { $set: { history: historyArray } }, { upsert: true });
+}
+async function getHistory(remoteJid) {
+    if (!chatHistoriesCollection) return null;
+    return await chatHistoriesCollection.findOne({ _id: remoteJid });
+}
+async function getProfile(remoteJid) {
+    if (!usersCollection) return null;
+    return await usersCollection.findOne({ _id: remoteJid });
+}
 async function sendWhatsappMessage(recipientJid, text, webhookData) {
     const { instance, server_url, apikey } = webhookData;
     if (!instance || !server_url || !apikey) {
@@ -132,13 +154,45 @@ async function notifyDirectorOfNewRegistration(finalData, webhookData) {
         );
     }
 }
+async function sendMetaMessage(recipientId, text) {
+    if (!META_PAGE_ACCESS_TOKEN) {
+        console.error("Falta el token META_PAGE_ACCESS_TOKEN.");
+        return;
+    }
+    const url = `https://graph.facebook.com/v19.0/me/messages`;
+    const payload = {
+        recipient: { id: recipientId },
+        message: { text },
+        messaging_type: "RESPONSE"
+    };
+    try {
+        await axios.post(url, payload, { params: { access_token: META_PAGE_ACCESS_TOKEN } });
+    } catch (error) {
+        console.error(`Error al enviar mensaje de Meta:`, error.response?.data?.error);
+    }
+}
+
+async function sendMessage(platform, recipientId, text, webhookData = {}) {
+    console.log(`Enviando mensaje a [${platform}] para [${recipientId}]`);
+    if (platform === 'whatsapp') {
+        await sendWhatsappMessage(recipientId, text, webhookData);
+    } else if (platform === 'meta') {
+        await sendMetaMessage(recipientId, text);
+    } else {
+        console.error(`Plataforma desconocida: ${platform}`);
+    }
+}
 // Inicializar conexión al arrancar
 connectToMongoDB();
 
 module.exports = {
     // Exportar getters para ambas colecciones
-    getUsersCollection: () => ({ usersCollection, mongoConnectionError }),
-    getChatHistoriesCollection: () => ({ chatHistoriesCollection, mongoConnectionError }),
-    sendWhatsappMessage,
+    getUsersCollection,
+    getChatHistoriesCollection,
+    sendMessage,
+    saveProfile,
+    getProfile,
+    getHistory,
+    saveHistory,
     notifyDirectorOfNewRegistration
 };

@@ -1,13 +1,15 @@
 /**
  * index.js
- * Punto de entrada principal y enrutador.
+ * Punto de entrada principal y enrutador para múltiples plataformas.
  */
 const express = require('express');
 const bodyParser = require('body-parser');
-const { getUsersCollection, getChatHistoriesCollection } = require('./utils.js');
+const { getProfile, saveProfile, getHistory } = require('./utils.js');
 const { initializeInfoModel, handleInfoRequest } = require('./informacion.js');
 const { initializeInscriptionModel, handleInscription } = require('./inscripcion.js');
 require('dotenv').config();
+
+const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN;
 
 // --- INICIALIZACIÓN GLOBAL ---
 async function main() {
@@ -22,98 +24,91 @@ main();
 const app = express();
 app.use(bodyParser.json({ limit: '25mb' }));
 
+// --- WEBHOOK PARA EVOLUTION API (WHATSAPP) ---
+app.post('/webhook/evolution', async (req, res) => {
+    if (req.body?.data?.key?.fromMe) return res.status(200).send("Mensaje propio ignorado.");
+    
+    const webhookData = req.body;
+    const remoteJid = webhookData.data?.key?.remoteJid;
+    if (!remoteJid) return res.status(400).send("Webhook de WhatsApp inválido.");
+
+    await processMessage('whatsapp', remoteJid, webhookData);
+    res.status(200).send("Procesado");
+});
+
+// --- WEBHOOK PARA FACEBOOK E INSTAGRAM (META) ---
+
 // Endpoint para la verificación del webhook de Meta
 app.get('/webhook/meta', (req, res) => {
-    // Carga tu token de verificación desde las variables de entorno.
-    const verifyToken = process.env.META_VERIFY_TOKEN;
-
-    // Meta envía estos tres parámetros en la solicitud de verificación.
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
 
-    // Verifica que los parámetros 'mode' y 'token' existan en la solicitud.
     if (mode && token) {
-        // Verifica que 'mode' sea 'subscribe' y que el token coincida con el tuyo.
-        if (mode === 'subscribe' && token === verifyToken) {
+        if (mode === 'subscribe' && token === META_VERIFY_TOKEN) {
             console.log('WEBHOOK_VERIFIED');
-            // Responde con el valor 'challenge' que te envió Meta para completar el proceso.
             res.status(200).send(challenge);
         } else {
-            // Si los tokens no coinciden, responde con un error '403 Forbidden'.
             res.sendStatus(403);
         }
+    }
+});
+
+// Endpoint para recibir mensajes de Meta
+app.post('/webhook/meta', async (req, res) => {
+    const body = req.body;
+    if (body.object === 'page' || body.object === 'instagram') {
+        body.entry.forEach(entry => {
+            entry.messaging.forEach(event => {
+                if (event.message && !event.message.is_echo) {
+                    const senderId = event.sender.id;
+                    const platform = body.object === 'instagram' ? 'instagram' : 'facebook';
+                    processMessage(platform, senderId, body);
+                }
+            });
+        });
+        res.status(200).send('EVENT_RECEIVED');
     } else {
-        // Si faltan los parámetros, responde con un error.
-        res.sendStatus(400);
+        res.sendStatus(404);
     }
 });
 
-app.post('/webhook/evolution', async (req, res) => {
-    // Validaciones iniciales del webhook
-    if (typeof req.body !== 'object' || req.body === null || !req.body.event || !req.body.data.message) {
-        return res.status(400).send("Webhook con formato inválido.");
-    }
-    if (req.body.data.key.fromMe) {
-        return res.status(200).send("Mensaje propio ignorado.");
-    }
-
-    const webhookData = req.body;
-    const remoteJid = webhookData.data.key.remoteJid;
-    const userInput = webhookData.data.message.conversation || (webhookData.data.message.imageMessage ? "[IMAGEN RECIBIDA]" : "");
-
-    if (!userInput) {
-        return res.status(200).send("Mensaje sin contenido procesable.");
-    }
-
-    const { usersCollection } = getUsersCollection();
-    const { chatHistoriesCollection } = getChatHistoriesCollection();
-
-    if (!usersCollection || !chatHistoriesCollection) {
-        console.error("Error de DB: Una o más colecciones no están disponibles.");
-        return res.status(200).send("Error de DB, no se puede procesar.");
-    }
-
+/**
+ * Función central para procesar mensajes de cualquier plataforma.
+ * @param {string} platform - 'whatsapp', 'facebook', o 'instagram'
+ * @param {string} senderId - El ID único del usuario en la plataforma
+ * @param {object} webhookData - El cuerpo completo del webhook
+ */
+async function processMessage(platform, senderId, webhookData) {
     try {
-        // Buscar perfil de inscripción y historial de chat por separado
-        let userProfile = await usersCollection.findOne({ _id: remoteJid });
-        let chatHistory = await chatHistoriesCollection.findOne({ _id: remoteJid });
+        let userProfile = await getProfile(senderId);
+        let chatHistory = await getHistory(senderId);
 
-        // Si no existen, crearlos
         if (!userProfile) {
-            userProfile = { _id: remoteJid, inscriptionStatus: 'not_started', inscriptionData: {} };
-            await usersCollection.insertOne(userProfile);
+            userProfile = { _id: senderId, platform, inscriptionStatus: 'not_started', inscriptionData: {}, history: [] };
+            await saveProfile(senderId, userProfile);
         }
+        
         if (!chatHistory) {
-            chatHistory = { _id: remoteJid, history: [] };
-            await chatHistoriesCollection.insertOne(chatHistory);
+            chatHistory = { _id: senderId, history: [] };
         }
-
         // --- LÓGICA DE ENRUTAMIENTO ---
-        // Si el usuario ya está en el proceso de inscripción
         if (userProfile.inscriptionStatus && userProfile.inscriptionStatus !== 'not_started' && userProfile.inscriptionStatus !== 'completed') {
-            // El módulo de inscripción no necesita el historial de chat general
-            await handleInscription(userProfile, webhookData);
+            await handleInscription(userProfile, platform, webhookData);
+        } else {
+            await handleInfoRequest(userProfile, chatHistory, platform, webhookData);
         }
-        // Si no, usar el bot informativo (que sí usa el historial de chat)
-        else {
-            await handleInfoRequest(userProfile, chatHistory, webhookData);
-        }
-
-        res.status(200).send("Procesado");
-
     } catch (error) {
-        console.error(`Error procesando mensaje para ${remoteJid}:`, error);
-        res.status(500).send("Error interno del servidor.");
+        console.error(`Error procesando mensaje para ${senderId} en ${platform}:`, error);
     }
-});
-
-app.get('/', (req, res) => {
-    res.send('Servidor ULAL AI Agent (v14 - Separated History) funcionando.');
-});
-    const PORT = process.env.PORT || 3010;
+}
+const PORT = process.env.PORT || 3010;
     app.listen(PORT, '0.0.0.0', () => {
         console.log(`Servidor escuchando en http://localhost:${PORT}`);
     });
+
+app.get('/', (req, res) => {
+    res.send('Servidor ULAL AI Agent (Multi-platform) funcionando.');
+});
 
 module.exports = app;

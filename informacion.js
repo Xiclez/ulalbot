@@ -7,7 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const pdf = require('pdf-parse');
 const axios = require('axios');
-const { getUsersCollection, getChatHistoriesCollection, sendWhatsappMessage } = require('./utils.js');
+const { getUsersCollection, getChatHistoriesCollection, saveProfile, sendMessage, saveHistory } = require('./utils.js');
 // Importar handleInscription de forma diferida para evitar dependencias circulares
 let inscriptionHandler;
 setTimeout(() => {
@@ -170,14 +170,18 @@ ${knowledgeText || "No hay información disponible en los documentos."}
 }
 
 // La función ahora recibe el documento de historial por separado
-async function handleInfoRequest(userProfile, chatHistory, webhookData) {
+async function handleInfoRequest(userProfile, chatHistory, platform , webhookData) {
     if (!infoModel) {
-        await sendWhatsappMessage(userProfile._id, "Nuestro sistema está ocupado, intenta de nuevo.", webhookData);
+        await sendMessage(platform, userProfile._id, "Nuestro sistema está ocupado, intenta de nuevo.", webhookData);
         return;
     }
 
-    const userInput = webhookData.data.message.conversation;
+    const userInput = platform === 'whatsapp' 
+        ? webhookData.data.message.conversation 
+        : webhookData.entry[0].messaging[0].message.text;
+
     const remoteJid = userProfile._id;
+
     const { usersCollection } = getUsersCollection();
     const { chatHistoriesCollection } = getChatHistoriesCollection();
 
@@ -186,11 +190,12 @@ async function handleInfoRequest(userProfile, chatHistory, webhookData) {
     if (inscriptionKeywords.some(keyword => userInput.toLowerCase().includes(keyword))) {
         console.log(`Intención de inscripción detectada para ${remoteJid}.`);
         userProfile.inscriptionStatus = 'awaiting_all_data';
-        await usersCollection.updateOne({ _id: remoteJid }, { $set: { inscriptionStatus: 'awaiting_all_data' } });
+        userProfile.platform = platform;
+        await saveProfile(remoteJid, userProfile);
 
         // Delegar a inscripcion.js
         if (inscriptionHandler) {
-            await inscriptionHandler(userProfile, webhookData);
+            await inscriptionHandler(userProfile, platform, webhookData);
         } else {
             console.error("El manejador de inscripción no está disponible.");
         }
@@ -212,13 +217,13 @@ async function handleInfoRequest(userProfile, chatHistory, webhookData) {
                 const { name, args } = call;
                 if (toolImplementations[name]) {
                     console.log(`[LOG] Ejecutando herramienta '${name}' con argumentos:`, args);
-                    await sendWhatsappMessage(remoteJid, `Un momento, estoy buscando información sobre "${args.query}"...`, webhookData);
+                    await sendMessage(platform, remoteJid, `Un momento, estoy buscando información sobre "${args.query}"...`, webhookData);
                     
                     const toolResult = await toolImplementations[name](args);
                     
                     if (name === 'search_web' && toolResult.success) {
                         console.log(`[LOG] Enviando resultados de búsqueda directamente a ${remoteJid}`);
-                        await sendWhatsappMessage(remoteJid, toolResult.result, webhookData);
+                        await sendMessage(platform, remoteJid, toolResult.result, webhookData);
                     }
 
                     // **CORRECCIÓN 2: Usar el formato correcto para la respuesta de la herramienta.**
@@ -236,18 +241,15 @@ async function handleInfoRequest(userProfile, chatHistory, webhookData) {
         }
         
         const botResponseText = response.text();
-        await sendWhatsappMessage(remoteJid, botResponseText, webhookData);
+        await sendMessage(platform, remoteJid, botResponseText, webhookData);
 
-        const updatedHistory = await chat.getHistory();
-        await chatHistoriesCollection.updateOne(
-            { _id: remoteJid },
-            { $set: { history: updatedHistory } },
-            { upsert: true } // Crear si no existe
-        );
+        userProfile.history = await chat.getHistory();
+        await saveProfile(remoteJid, userProfile);
+        await saveHistory(remoteJid, userProfile.history);
 
     } catch (error) {
         console.error(`Error en handleInfoRequest para ${remoteJid}:`, error);
-        await sendWhatsappMessage(remoteJid, "Lo siento, tuve un problema al procesar tu solicitud.", webhookData);
+        await sendMessage(platform, remoteJid, "Lo siento, tuve un problema al procesar tu solicitud.", webhookData);
     }
 }
 

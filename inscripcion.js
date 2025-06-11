@@ -5,7 +5,7 @@
  */
 const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
 // **CORRECCIÓN:** Se ha actualizado la importación para usar MongoDB.
-const { getUsersCollection, sendWhatsappMessage, notifyDirectorOfNewRegistration } = require('./utils.js');
+const { getUsersCollection, sendMessage, notifyDirectorOfNewRegistration } = require('./utils.js');
 require('dotenv').config();
 
 const safetySettings = [
@@ -140,9 +140,9 @@ const fieldQuestions = {
 };
 
 
-async function handleInscription(userProfile, webhookData) {
+async function handleInscription(userProfile, platform, webhookData) {
     if (!inscriptionModel || !visionModel || !validationModel) {
-        await sendWhatsappMessage(webhookData.data.key.remoteJid, "Sistema ocupado, intenta de nuevo.", webhookData);
+        await sendMessage(platform, userProfile._id, "Sistema ocupado, intenta de nuevo.", webhookData);
         return;
     }
     
@@ -150,14 +150,55 @@ async function handleInscription(userProfile, webhookData) {
     const { usersCollection } = getUsersCollection();
     if (!usersCollection) {
         console.error("Error de DB en handleInscription: La colección de usuarios no está disponible.");
-        await sendWhatsappMessage(webhookData.data.key.remoteJid, "Lo siento, hay un problema con nuestra base de datos. Por favor, intenta más tarde.", webhookData);
+        await sendMessage(platform, userProfile._id, "Lo siento, hay un problema con nuestra base de datos. Por favor, intenta más tarde.", webhookData);
         return;
     }
-
-    const remoteJid = webhookData.data.key.remoteJid;
+    const remoteJid = userProfile._id;
     let currentStatus = userProfile.inscriptionStatus;
-    const userInput = webhookData.data.message.conversation;
-    
+
+    // --- EXTRACCIÓN DE DATOS MULTIPLATAFORMA ---
+    let userInput = null;
+    let imageAttachment = null;
+
+    if (platform === 'whatsapp') {
+        userInput = webhookData.data.message.conversation;
+        if (webhookData.data.message.imageMessage) {
+            imageAttachment = {
+                base64: webhookData.data.message.base64,
+                mimeType: webhookData.data.message.imageMessage.mimetype || 'image/jpeg'
+            };
+        }
+    } else if (platform === 'meta') { // Facebook o Instagram
+        const messagingEvent = webhookData.entry[0].messaging[0];
+        userInput = messagingEvent.message.text;
+        if (messagingEvent.message.attachments) {
+            const attachment = messagingEvent.message.attachments[0];
+            if (attachment.type === 'image') {
+                imageAttachment = {
+                    url: attachment.payload.url,
+                    mimeType: 'image/jpeg' // La API de Meta no siempre provee mimetype, asumimos jpeg.
+                };
+            }
+        }
+    }
+
+    // --- PROCESAMIENTO DE IMÁGENES (INE Y COMPROBANTE) ---
+    if (imageAttachment) {
+        let imageBase64 = imageAttachment.base64;
+        
+        // Si la imagen viene de Meta, necesitamos descargarla primero
+        if (platform === 'meta' && imageAttachment.url) {
+            try {
+                await sendMessage(platform, remoteJid, "Recibí tu imagen, un momento mientras la proceso...", webhookData);
+                const response = await axios.get(imageAttachment.url, { responseType: 'arraybuffer' });
+                imageBase64 = Buffer.from(response.data).toString('base64');
+            } catch (error) {
+                console.error("Error descargando imagen de Meta:", error);
+                await sendMessage(platform, remoteJid, "Tuve problemas para procesar la imagen que enviaste. ¿Podrías intentar de nuevo?", webhookData);
+                return;
+            }
+        }
+    }
     // --- INICIO DEL FLUJO DE INSCRIPCIÓN ---
     if (currentStatus === 'awaiting_all_data') {
         const initialMessage = `¡Excelente! Para realizar tu trámite de inscripción, por favor mándame tus siguientes datos. Puedes escribirlos en un solo mensaje, separados por comas o en diferentes líneas:
@@ -171,7 +212,7 @@ async function handleInscription(userProfile, webhookData) {
 ▪️ 2 contactos de emergencia (nombre y teléfono)
 ▪️ Nivel al que te inscribes (y horario si es presencial)`;
         
-        await sendWhatsappMessage(remoteJid, initialMessage, webhookData);
+        await sendMessage(platform,remoteJid, initialMessage, webhookData);
         userProfile.inscriptionStatus = 'validating_data';
         await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
         return;
@@ -179,7 +220,7 @@ async function handleInscription(userProfile, webhookData) {
     
     // --- VALIDACIÓN DEL BLOQUE DE DATOS INICIAL ---
     if (currentStatus === 'validating_data' && userInput) {
-        await sendWhatsappMessage(remoteJid, "Gracias, estoy procesando tu información...", webhookData);
+        await sendMessage(platform, remoteJid, "Gracias, estoy procesando tu información...", webhookData);
         try {
             const validationPrompt = `Analiza este bloque de texto y extrae los campos: nombreCompleto, fechaNacimiento, curp, email, telefono, nivelEducacion, escuelaProcedencia, contactoEmergencia1, contactoEmergencia2, nivelInscripcion. Responde solo con un JSON: {"action": "validate_data", "data": {...}, "missing": [...]}. El texto es: "${userInput}"`;
             const result = await inscriptionModel.generateContent(validationPrompt);
@@ -193,16 +234,16 @@ async function handleInscription(userProfile, webhookData) {
                     userProfile.inscriptionStatus = `collecting_${nextField}`;
                     await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
                     const question = fieldQuestions[nextField] || `Faltó un dato, ¿podrías proporcionármelo?`;
-                    await sendWhatsappMessage(remoteJid, `Gracias. ${question}`, webhookData);
+                    await sendMessage(platform, remoteJid, `Gracias. ${question}`, webhookData);
                 } else {
                     userProfile.inscriptionStatus = 'awaiting_ine_front';
                     await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
-                    await sendWhatsappMessage(remoteJid, "¡Perfecto, tengo todos tus datos! Ahora, por favor, envíame una foto clara del FRENTE de tu INE.", webhookData);
+                    await sendMessage(platform, remoteJid, "¡Perfecto, tengo todos tus datos! Ahora, por favor, envíame una foto clara del FRENTE de tu INE.", webhookData);
                 }
             }
         } catch (error) {
             console.error("Error al validar datos:", error);
-            await sendWhatsappMessage(remoteJid, "Hubo un problema procesando tu información. ¿Podrías intentar enviarla de nuevo?", webhookData);
+            await sendMessage(platform, remoteJid, "Hubo un problema procesando tu información. ¿Podrías intentar enviarla de nuevo?", webhookData);
         }
         return;
     }
@@ -221,10 +262,10 @@ async function handleInscription(userProfile, webhookData) {
                 const nextField = responseJson.missing[0];
                 userProfile.inscriptionStatus = `collecting_${nextField}`;
                 const question = fieldQuestions[nextField];
-                await sendWhatsappMessage(remoteJid, `Gracias. ${question}`, webhookData);
+                await sendMessage(platform, remoteJid, `Gracias. ${question}`, webhookData);
             } else {
                 userProfile.inscriptionStatus = 'awaiting_ine_front';
-                await sendWhatsappMessage(remoteJid, "¡Perfecto, ahora sí tengo todo! Por favor, envíame la foto del FRENTE de tu INE.", webhookData);
+                await sendMessage(platform, remoteJid, "¡Perfecto, ahora sí tengo todo! Por favor, envíame la foto del FRENTE de tu INE.", webhookData);
             }
             await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
         }
@@ -233,13 +274,13 @@ async function handleInscription(userProfile, webhookData) {
 
     // --- MANEJO DE IMÁGENES (VALIDACIÓN DE INE Y COMPROBANTE DE PAGO) ---
     if (webhookData.data.message.imageMessage) {
-        const imageBase64 = webhookData.data.message.base64;
+        const imageBase64 = imageAttachment.base64;
         
         if (currentStatus === 'awaiting_ine_front' && imageBase64) {
-            await sendWhatsappMessage(remoteJid, "Recibí la foto del frente, validando la información... 🧐", webhookData);
+            await sendMessage(platform, remoteJid, "Recibí la foto del frente, validando la información... 🧐", webhookData);
             const extractedData = await extractIneData(imageBase64, 'anverso');
             if (!extractedData?.data) {
-                await sendWhatsappMessage(remoteJid, "No pude leer la información de la imagen. ¿Podrías enviar una foto más clara?", webhookData);
+                await sendMessage(platform, remoteJid, "No pude leer la información de la imagen. ¿Podrías enviar una foto más clara?", webhookData);
                 return;
             }
             const validationResult = await compareIneAnverso(userProfile.inscriptionData, extractedData.data);
@@ -247,17 +288,17 @@ async function handleInscription(userProfile, webhookData) {
                 userProfile.inscriptionData.ineFrontBase64 = imageBase64;
                 userProfile.inscriptionStatus = 'awaiting_ine_back';
                 await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
-                await sendWhatsappMessage(remoteJid, "¡Validación exitosa! 👍 Ahora, por favor, envíame la foto del REVERSO de la misma INE.", webhookData);
+                await sendMessage(platform, remoteJid, "¡Validación exitosa! 👍 Ahora, por favor, envíame la foto del REVERSO de la misma INE.", webhookData);
             } else {
-                await sendWhatsappMessage(remoteJid, `Hubo una discrepancia al validar tu INE: ${validationResult.reason}. Por favor, verifica tus datos o envía una foto más clara.`, webhookData);
+                await sendMessage(platform, remoteJid, `Hubo una discrepancia al validar tu INE: ${validationResult.reason}. Por favor, verifica tus datos o envía una foto más clara.`, webhookData);
             }
         } 
         // PROCESO PARA EL REVERSO DE LA INE
         else if (currentStatus === 'awaiting_ine_back' && imageBase64) {
-            await sendWhatsappMessage(remoteJid, "Recibí la foto del reverso, realizando la última comprobación...", webhookData);
+            await sendMessage(platform, remoteJid, "Recibí la foto del reverso, realizando la última comprobación...", webhookData);
             const extractedData = await extractIneData(imageBase64, 'reverso');
              if (!extractedData?.data) {
-                await sendWhatsappMessage(remoteJid, "No pude leer la información del reverso. ¿Podrías enviar una foto más clara?", webhookData);
+                await sendMessage(platform, remoteJid, "No pude leer la información del reverso. ¿Podrías enviar una foto más clara?", webhookData);
                 return;
             }
             const validationResult = await validateIneReverso(userProfile.inscriptionData, extractedData.data);
@@ -266,9 +307,9 @@ async function handleInscription(userProfile, webhookData) {
                 userProfile.inscriptionStatus = 'awaiting_payment_method';
                 await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
                 const message = `¡Perfecto, todos tus documentos son correctos! Para finalizar, solo falta el pago. ¿Qué método prefieres?\n1. Depósito o Transferencia\n2. Pago con Tarjeta\n3. Pago en Caja`;
-                await sendWhatsappMessage(remoteJid, message, webhookData);
+                await sendMessage(platform, remoteJid, message, webhookData);
             } else {
-                await sendWhatsappMessage(remoteJid, `La información del reverso no coincide: ${validationResult.reason}. Por favor, envía una foto clara del reverso de tu INE.`, webhookData);
+                await sendMessage(platform, remoteJid, `La información del reverso no coincide: ${validationResult.reason}. Por favor, envía una foto clara del reverso de tu INE.`, webhookData);
             }
         }else if (currentStatus === 'awaiting_payment_proof' && imageBase64) {
             userProfile.payment = {
@@ -280,7 +321,7 @@ async function handleInscription(userProfile, webhookData) {
             userProfile.inscriptionStatus = 'completed';
             const finalData = { _id: remoteJid, ...userProfile.inscriptionData, payment: userProfile.payment, status: 'completed', createdAt: new Date() };
             await usersCollection.replaceOne({ _id: remoteJid }, finalData, { upsert: true });
-            await sendWhatsappMessage(remoteJid, "¡He recibido tu comprobante! Gracias, en breve confirmaremos tu pago. ¡Tu inscripción está completa!", webhookData);
+            await sendMessage(platform, remoteJid, "¡He recibido tu comprobante! Gracias, en breve confirmaremos tu pago. ¡Tu inscripción está completa!", webhookData);
         }
         return;
     }
@@ -301,13 +342,13 @@ async function handleInscription(userProfile, webhookData) {
             userProfile.payment = { method: 'caja', status: 'pending_schedule' };
             message = `¡Con gusto te esperamos! Nuestros horarios de atención son:\nLunes a Viernes de 8:00 a 19:30\nSábados de 8:00 a 14:00\nDomingos de 9:00 a 13:00\n\n¿Qué día y hora te gustaría pasar a realizar tu pago para agendar tu visita?`;
         } else {
-             await sendWhatsappMessage(remoteJid, "No entendí tu selección. Por favor, elige 1, 2 o 3.", webhookData);
+             await sendMessage(platform, remoteJid, "No entendí tu selección. Por favor, elige 1, 2 o 3.", webhookData);
              return;
         }
         await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
         const finalData = { _id: remoteJid, ...userProfile.inscriptionData, payment: userProfile.payment, status: 'completed', createdAt: new Date() };
         await notifyDirectorOfNewRegistration(finalData, webhookData);
-        await sendWhatsappMessage(remoteJid, message, webhookData);
+        await sendMessage(platform, remoteJid, message, webhookData);
         return;
     }
 
@@ -320,9 +361,9 @@ async function handleInscription(userProfile, webhookData) {
             await usersCollection.updateOne({ _id: remoteJid }, { $set: userProfile }, { upsert: true });
             //const finalData = { _id: remoteJid, ...userProfile.inscriptionData, payment: userProfile.payment, status: 'completed', createdAt: new Date() };            
             //await notifyDirectorOfNewRegistration(finalData, webhookData);
-            await sendWhatsappMessage(remoteJid, `¡Perfecto! Hemos agendado tu visita para el ${parsedDate.dateTime}. ¡Tu inscripción está completa! Te esperamos.`, webhookData);
+            await sendMessage(platform, remoteJid, `¡Perfecto! Hemos agendado tu visita para el ${parsedDate.dateTime}. ¡Tu inscripción está completa! Te esperamos.`, webhookData);
         } else {
-            await sendWhatsappMessage(remoteJid, "No pude entender la fecha y hora. ¿Podrías ser más específico? Por ejemplo: 'mañana a las 10 am' o 'el viernes a las 4 de la tarde'.", webhookData);
+            await sendMessage(platform, remoteJid, "No pude entender la fecha y hora. ¿Podrías ser más específico? Por ejemplo: 'mañana a las 10 am' o 'el viernes a las 4 de la tarde'.", webhookData);
         }
         return;
     }
