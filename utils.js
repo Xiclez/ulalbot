@@ -176,7 +176,7 @@ async function sendMessage(platform, recipientId, text, webhookData = {}) {
     console.log(`Enviando mensaje a [${platform}] para [${recipientId}]`);
     if (platform === 'whatsapp') {
         await sendWhatsappMessage(recipientId, text, webhookData);
-    } else if (platform === 'meta') {
+    } else if (platform === 'meta' || platform === 'facebook' || platform === 'instagram') {
         await sendMetaMessage(recipientId, text);
     } else {
         console.error(`Plataforma desconocida: ${platform}`);

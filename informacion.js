@@ -172,6 +172,7 @@ ${knowledgeText || "No hay información disponible en los documentos."}
 // La función ahora recibe el documento de historial por separado
 async function handleInfoRequest(userProfile, chatHistory, platform , webhookData) {
     if (!infoModel) {
+        console.error("[ERROR] El modelo de información no está inicializado.");
         await sendMessage(platform, userProfile._id, "Nuestro sistema está ocupado, intenta de nuevo.", webhookData);
         return;
     }
@@ -182,13 +183,10 @@ async function handleInfoRequest(userProfile, chatHistory, platform , webhookDat
 
     const remoteJid = userProfile._id;
 
-    const { usersCollection } = getUsersCollection();
-    const { chatHistoriesCollection } = getChatHistoriesCollection();
-
     // Lógica para detectar si el usuario quiere iniciar la inscripción
     const inscriptionKeywords = ['inscribirme', 'inscripción', 'inscribir', 'registro', 'quiero inscribirme'];
     if (inscriptionKeywords.some(keyword => userInput.toLowerCase().includes(keyword))) {
-        console.log(`Intención de inscripción detectada para ${remoteJid}.`);
+        console.log(`[INTENT] Intención de inscripción detectada para ${remoteJid} en ${platform}.`);
         userProfile.inscriptionStatus = 'awaiting_all_data';
         userProfile.platform = platform;
         await saveProfile(remoteJid, userProfile);
@@ -203,9 +201,14 @@ async function handleInfoRequest(userProfile, chatHistory, platform , webhookDat
     }
 
     try {
+        console.log(`[TO_GEMINI] Historial para ${remoteJid}:`, JSON.stringify(chatHistory.history || []));
+        console.log(`[TO_GEMINI] Enviando al modelo: "${userInput}"`);
+
         const chat = infoModel.startChat({ history: chatHistory.history || [] });
         let result = await chat.sendMessage(userInput);
         let response = result.response;
+
+        console.log(`[FROM_GEMINI] Respuesta recibida: "${response}"`);
 
         // Bucle para manejar las llamadas a herramientas
         while (response.functionCalls() && response.functionCalls().length > 0) {
