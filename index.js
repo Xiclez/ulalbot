@@ -28,6 +28,8 @@ app.use(bodyParser.json({ limit: '25mb' }));
 app.post('/webhook/evolution', async (req, res) => {
     if (req.body?.data?.key?.fromMe) return res.status(200).send("Mensaje propio ignorado.");
     
+    console.log('[WEBHOOK_EVOLUTION] Payload recibido:', JSON.stringify(req.body));
+
     const webhookData = req.body;
     const remoteJid = webhookData.data?.key?.remoteJid;
     if (!remoteJid) return res.status(400).send("Webhook de WhatsApp inválido.");
@@ -57,6 +59,8 @@ app.get('/webhook/meta', (req, res) => {
 // Endpoint para recibir mensajes de Meta
 app.post('/webhook/meta', async (req, res) => {
     const body = req.body;
+    console.log('[WEBHOOK_META] Payload recibido:', JSON.stringify(body));
+
     if (body.object === 'page' || body.object === 'instagram') {
         body.entry.forEach(entry => {
             entry.messaging.forEach(event => {
@@ -92,12 +96,22 @@ async function processMessage(platform, senderId, webhookData) {
         if (!chatHistory) {
             chatHistory = { _id: senderId, history: [] };
         }
+        
+        if (!userInput) {
+        console.log(`[PROCESS_MSG] Mensaje sin texto recibido (sticker, reacción, etc.). Ignorando.`);
+        // Opcional: enviar una respuesta genérica.
+        // await sendMessage(platform, senderId, "Lo siento, solo puedo procesar mensajes de texto.", webhookData);
+        return;
+        }
+
         // --- LÓGICA DE ENRUTAMIENTO ---
         if (userProfile.inscriptionStatus && userProfile.inscriptionStatus !== 'not_started' && userProfile.inscriptionStatus !== 'completed') {
             await handleInscription(userProfile, platform, webhookData);
         } else {
             await handleInfoRequest(userProfile, chatHistory, platform, webhookData);
         }
+        console.log(`[PROCESS_MSG] Procesando mensaje de [${platform}] para [${senderId}]`);
+
     } catch (error) {
         console.error(`Error procesando mensaje para ${senderId} en ${platform}:`, error);
     }

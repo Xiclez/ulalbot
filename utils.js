@@ -10,6 +10,7 @@ const MONGODB_URI = process.env.MONGODB_URI;
 const DB_NAME = process.env.DB_NAME || 'ulal_chatbot_db';
 const USERS_COLLECTION = 'user_profiles';
 const CHAT_HISTORY_COLLECTION = 'chat_histories'; // Colección dedicada para historiales
+const META_PAGE_ACCESS_TOKEN = process.env.META_PAGE_ACCESS_TOKEN;
 
 let dbClient;
 let usersCollection;
