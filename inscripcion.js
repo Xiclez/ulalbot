@@ -7,7 +7,7 @@ const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@googl
 // **CORRECCIÓN:** Se ha actualizado la importación para usar MongoDB.
 const { getUsersCollection, sendMessage, notifyDirectorOfNewRegistration } = require('./utils.js');
 require('dotenv').config();
-
+const axios = require('axios');
 const safetySettings = [
     { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
     { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
