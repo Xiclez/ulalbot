@@ -60,17 +60,20 @@ app.get('/webhook/meta', (req, res) => {
 app.post('/webhook/meta', async (req, res) => {
     const body = req.body;
     console.log('[WEBHOOK_META] Payload recibido:', JSON.stringify(body));
-
+    
     if (body.object === 'page' || body.object === 'instagram') {
-        body.entry.forEach(entry => {
-            entry.messaging.forEach(event => {
+        // Usar for...of en lugar de forEach para poder usar await dentro.
+        for (const entry of body.entry) {
+            for (const event of entry.messaging) {
                 if (event.message && !event.message.is_echo) {
                     const senderId = event.sender.id;
-                    const platform = body.object === 'instagram' ? 'instagram' : 'facebook';
-                    processMessage(platform, senderId, body);
+                    const platform = 'meta'; // Unificar Facebook e Instagram
+                    // Esperar a que el procesamiento del mensaje termine antes de continuar.
+                    await processMessage(platform, senderId, body);
                 }
-            });
-        });
+            }
+        }
+        // Responder a Meta solo después de que todos los mensajes han sido procesados.
         res.status(200).send('EVENT_RECEIVED');
     } else {
         res.sendStatus(404);
