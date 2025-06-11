@@ -243,7 +243,7 @@ async function handleInscription(userProfile, platform, webhookData) {
              await notifyDirectorOfNewRegistration(finalData, webhookData);
              await sendMessage(platform, remoteJid, "¡He recibido tu comprobante! Gracias, en breve confirmaremos tu pago. ¡Tu inscripción está completa!", webhookData);
         }
-        return; // Termina la ejecución después de manejar la imagen
+        return; 
     }
 
     // --- PROCESAMIENTO DE TEXTO ---

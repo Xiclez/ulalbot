@@ -11,6 +11,9 @@ const DB_NAME = process.env.DB_NAME || 'ulal_chatbot_db';
 const USERS_COLLECTION = 'user_profiles';
 const CHAT_HISTORY_COLLECTION = 'chat_histories'; // Colección dedicada para historiales
 const META_PAGE_ACCESS_TOKEN = process.env.META_PAGE_ACCESS_TOKEN;
+const instance = 'ulalbot';
+const EVO_SERVER_URL = process.env.EVO_SERVER_URL;
+const EVO_API_KEY = process.env.EVO_API_KEY;
 
 let dbClient;
 let usersCollection;
@@ -69,29 +72,27 @@ async function getProfile(remoteJid) {
     if (!usersCollection) return null;
     return await usersCollection.findOne({ _id: remoteJid });
 }
-async function sendWhatsappMessage(recipientJid, text, webhookData) {
-    const { instance, server_url, apikey } = webhookData;
-    if (!instance || !server_url || !apikey) {
+async function sendWhatsappMessage(recipientJid, text) {
+    if (!instance || !EVO_SERVER_URL || !EVO_API_KEY) {
         console.error("Faltan datos de la instancia de Evolution para enviar mensaje.");
         return;
     }
-    const sendTextUrl = `${server_url}/message/sendText/${instance}`;
+    const sendTextUrl = `${EVO_SERVER_URL}/message/sendText/${instance}`;
     const payload = { number: recipientJid, text };
     try {
         console.log(`Enviando a Evolution API:`, JSON.stringify(payload));
-        await axios.post(sendTextUrl, payload, { headers: { 'apikey': apikey, 'Content-Type': 'application/json' } });
+        await axios.post(sendTextUrl, payload, { headers: { 'apikey': EVO_API_KEY, 'Content-Type': 'application/json' } });
         console.log("Respuesta enviada exitosamente.");
     } catch (error) {
         console.error(`Error al enviar mensaje a Evolution API:`, error.response?.data ? JSON.stringify(error.response.data) : error.message);
     }
 }
-async function sendWhatsappImage(recipientJid, caption, base64Data, fileName, webhookData) {
-    const { instance, server_url, apikey } = webhookData;
-    if (!instance || !server_url || !apikey) {
+async function sendWhatsappImage(recipientJid, caption, base64Data, fileName) {
+    if (!instance || !EVO_SERVER_URL || !EVO_API_KEY) {
         console.error("Faltan datos de la instancia de Evolution para enviar imagen.");
         return;
     }
-    const sendImageUrl = `${server_url}/message/sendMedia/${instance}`;
+    const sendImageUrl = `${EVO_SERVER_URL}/message/sendMedia/${instance}`;
     const payload = {
         number: recipientJid,
         options: {
@@ -106,7 +107,7 @@ async function sendWhatsappImage(recipientJid, caption, base64Data, fileName, we
     try {
         console.log(`Enviando imagen a Evolution API: ${fileName} a ${recipientJid}`);
         console.log("Payload: ",payload)
-        await axios.post(sendImageUrl, payload, { headers: { 'apikey': apikey, 'Content-Type': 'application/json' } });
+        await axios.post(sendImageUrl, payload, { headers: { 'apikey': EVO_API_KEY, 'Content-Type': 'application/json' } });
         console.log("Imagen enviada exitosamente.");
     } catch (error) {
         console.error(`Error al enviar imagen a Evolution API:`, error.response?.data ? JSON.stringify(error.response.data) : error.message);
