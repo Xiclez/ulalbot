@@ -117,6 +117,7 @@ async function notifyDirectorOfNewRegistration(finalData, webhookData) {
     const userDataText = `
 ¡Nuevo Alumno Inscrito!
 -------------------------
+*Plataforma:* ${finalData.platform || 'No especificada'}
 *Nombre:* ${finalData.nombreCompleto || 'No proporcionado'}
 *Fecha de Nacimiento:* ${finalData.fechaNacimiento || 'No proporcionado'}
 *CURP:* ${finalData.curp || 'No proporcionado'}

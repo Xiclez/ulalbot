@@ -238,7 +238,7 @@ async function handleInscription(userProfile, platform, webhookData) {
         else if (currentStatus === 'awaiting_payment_proof') {
              userProfile.payment = { method: 'transferencia', status: 'comprobante_recibido', proofBase64: imageBase64, receivedAt: new Date() };
              userProfile.inscriptionStatus = 'completed';
-             const finalData = { _id: remoteJid, ...userProfile.inscriptionData, payment: userProfile.payment, status: 'completed', createdAt: new Date() };
+             const finalData = { _id: remoteJid, platform: userProfile.platform, ...userProfile.inscriptionData, payment: userProfile.payment, status: 'completed', createdAt: new Date() };
              await usersCollection.replaceOne({ _id: remoteJid }, finalData, { upsert: true });
              await notifyDirectorOfNewRegistration(finalData, webhookData);
              await sendMessage(platform, remoteJid, "¡He recibido tu comprobante! Gracias, en breve confirmaremos tu pago. ¡Tu inscripción está completa!", webhookData);
