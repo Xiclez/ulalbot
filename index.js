@@ -96,13 +96,13 @@ async function processMessage(platform, senderId, webhookData) {
         if (!chatHistory) {
             chatHistory = { _id: senderId, history: [] };
         }
-        
-        if (!userInput) {
+
+        /*if (!userInput) {
         console.log(`[PROCESS_MSG] Mensaje sin texto recibido (sticker, reacción, etc.). Ignorando.`);
         // Opcional: enviar una respuesta genérica.
         // await sendMessage(platform, senderId, "Lo siento, solo puedo procesar mensajes de texto.", webhookData);
         return;
-        }
+        }*/
 
         // --- LÓGICA DE ENRUTAMIENTO ---
         if (userProfile.inscriptionStatus && userProfile.inscriptionStatus !== 'not_started' && userProfile.inscriptionStatus !== 'completed') {
