@@ -10,6 +10,7 @@ const { initializeInscriptionModel, handleInscription } = require('./inscripcion
 require('dotenv').config();
 
 const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN;
+const pageTokens = JSON.parse(process.env.META_PAGE_TOKENS || '{}');
 
 // --- INICIALIZACIÓN GLOBAL ---
 async function main() {
@@ -64,12 +65,19 @@ app.post('/webhook/meta', async (req, res) => {
     if (body.object === 'page' || body.object === 'instagram') {
         // Usar for...of en lugar de forEach para poder usar await dentro.
         for (const entry of body.entry) {
+            const pageId = entry.id; 
+            const pageAccessToken = pageTokens[pageId]; // Selecciona el token correcto
+
+            if (!pageAccessToken) {
+                console.error(`No se encontró un token para la Page ID: ${pageId}`);
+                continue; // Salta al siguiente evento si no hay token
+            }
             for (const event of entry.messaging) {
                 if (event.message && !event.message.is_echo) {
                     const senderId = event.sender.id;
                     const platform = 'meta'; // Unificar Facebook e Instagram
                     // Esperar a que el procesamiento del mensaje termine antes de continuar.
-                    await processMessage(platform, senderId, body);
+                    await processMessage(platform, senderId, body, pageAccessToken);
                 }
             }
         }
@@ -86,7 +94,7 @@ app.post('/webhook/meta', async (req, res) => {
  * @param {string} senderId - El ID único del usuario en la plataforma
  * @param {object} webhookData - El cuerpo completo del webhook
  */
-async function processMessage(platform, senderId, webhookData) {
+async function processMessage(platform, senderId, webhookData, pageAccessToken = null) {
     try {
         let userProfile = await getProfile(senderId);
         let chatHistory = await getHistory(senderId);
@@ -109,9 +117,9 @@ async function processMessage(platform, senderId, webhookData) {
 
         // --- LÓGICA DE ENRUTAMIENTO ---
         if (userProfile.inscriptionStatus && userProfile.inscriptionStatus !== 'not_started' && userProfile.inscriptionStatus !== 'completed') {
-            await handleInscription(userProfile, platform, webhookData);
+            await handleInscription(userProfile, platform, webhookData, pageAccessToken);
         } else {
-            await handleInfoRequest(userProfile, chatHistory, platform, webhookData);
+            await handleInfoRequest(userProfile, chatHistory, platform, webhookData, pageAccessToken);
         }
         console.log(`[PROCESS_MSG] Procesando mensaje de [${platform}] para [${senderId}]`);
 

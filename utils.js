@@ -10,7 +10,6 @@ const MONGODB_URI = process.env.MONGODB_URI;
 const DB_NAME = process.env.DB_NAME || 'ulal_chatbot_db';
 const USERS_COLLECTION = 'user_profiles';
 const CHAT_HISTORY_COLLECTION = 'chat_histories'; // Colección dedicada para historiales
-const META_PAGE_ACCESS_TOKEN = process.env.META_PAGE_ACCESS_TOKEN;
 const instance = 'ulalbot';
 const EVO_SERVER_URL = process.env.EVO_SERVER_URL;
 const EVO_API_KEY = process.env.EVO_API_KEY;
@@ -157,8 +156,8 @@ async function notifyDirectorOfNewRegistration(finalData, webhookData) {
         );
     }
 }
-async function sendMetaMessage(recipientId, text) {
-    if (!META_PAGE_ACCESS_TOKEN) {
+async function sendMetaMessage(recipientId, text, pageAccessToken) {
+    if (!pageAccessToken) {
         console.error("Falta el token META_PAGE_ACCESS_TOKEN.");
         return;
     }
@@ -169,18 +168,18 @@ async function sendMetaMessage(recipientId, text) {
         messaging_type: "RESPONSE"
     };
     try {
-        await axios.post(url, payload, { params: { access_token: META_PAGE_ACCESS_TOKEN } });
+        await axios.post(url, payload, { params: { access_token: pageAccessToken } });
     } catch (error) {
         console.error(`Error al enviar mensaje de Meta:`, error.response?.data?.error);
     }
 }
 
-async function sendMessage(platform, recipientId, text, webhookData = {}) {
+async function sendMessage(platform, recipientId, text, webhookData = {}, pageAccessToken = null) {
     console.log(`Enviando mensaje a [${platform}] para [${recipientId}]`);
     if (platform === 'whatsapp') {
         await sendWhatsappMessage(recipientId, text, webhookData);
     } else if (platform === 'meta' || platform === 'facebook' || platform === 'instagram') {
-        await sendMetaMessage(recipientId, text);
+        await sendMetaMessage(recipientId, text, pageAccessToken);
     } else {
         console.error(`Plataforma desconocida: ${platform}`);
     }
