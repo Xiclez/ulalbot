@@ -205,7 +205,11 @@ async function handleInfoRequest(userProfile, chatHistory, platform , webhookDat
         console.log(`[TO_GEMINI] Enviando al modelo: "${userInput}"`);
 
         const chat = infoModel.startChat({ history: chatHistory.history || [] });
+        console.log("[AWAITING_GEMINI] Esperando respuesta de la API de Google...");
+
         let result = await chat.sendMessage(userInput);
+        console.log("[AWAITING_GEMINI] La respuesta de la API de Google ha sido recibida.");
+
         let response = result.response;
 
         console.log(`[FROM_GEMINI] Respuesta recibida: "${response}"`);
